@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pepa Pig - Salta Charcos!</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#FF9EC8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Pepa Pig">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #87CEEB;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    font-family: 'Comic Sans MS', cursive;
+    overflow: hidden;
+    user-select: none;
+  }
+  #score {
+    font-size: 2rem;
+    color: white;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    margin-bottom: 8px;
+    min-height: 2.4rem;
+  }
+  #canvas { border-radius: 20px; cursor: pointer; touch-action: none; }
+  #msg {
+    font-size: 1.4rem;
+    color: white;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    margin-top: 8px;
+    min-height: 2rem;
+  }
+  #rotate {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: #FF9EC8;
+    z-index: 999;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    color: white;
+    text-align: center;
+    gap: 20px;
+  }
+  #rotate span { font-size: 5rem; animation: spin 1.5s ease-in-out infinite alternate; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(90deg); } }
+  @media (orientation: portrait) { #rotate { display: flex; } }
+</style>
+</head>
+<body>
+<div id="rotate"><span>📱</span>Gira el celular!</div>
+<div id="score"></div>
+<canvas id="canvas" width="600" height="300"></canvas>
+<div id="msg"></div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const msgEl   = document.getElementById('msg');
+
+function resize() {
+  const w = Math.min(window.innerWidth - 10, (window.innerHeight - 120) * 2, 900);
+  canvas.style.width  = w + 'px';
+  canvas.style.height = (w / 2) + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+
+const W = 600, H = 300, GROUND = H - 60;
+
+// ── Estado global ────────────────────────────────────────────────────────────
+let state     = 'char_select'; // char_select | mode_select | waiting | playing | dead
+let character = 'peppa';       // peppa | george
+let mode      = 'charcos';     // charcos | lodo
+let score     = 0;
+let lives     = 3;
+let frame     = 0;
+const highScore = { peppa_charcos:0, peppa_lodo:0, george_charcos:0, george_lodo:0 };
+
+const hero = { x:110, y:GROUND, vy:0, jumping:false, legPhase:0 };
+let puddles = [], particles = [], popups = [];
+let nextPuddle = 120, speed = 2.5;
+
+// Cajas de selección
+const BOX_CHAR = {
+  peppa:  { x:80,  y:55, w:170, h:185 },
+  george: { x:350, y:55, w:170, h:185 },
+};
+const BOX_MODE = {
+  charcos: { x:60,  y:60, w:190, h:170 },
+  lodo:    { x:350, y:60, w:190, h:170 },
+};
+
+// ── Input ────────────────────────────────────────────────────────────────────
+function canvasPos(e) {
+  const r  = canvas.getBoundingClientRect();
+  const sx = W / r.width;
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+  const cy = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
+  return { x: cx * sx, y: cy * sx };
+}
+function inBox(p, b) { return p.x>=b.x && p.x<=b.x+b.w && p.y>=b.y && p.y<=b.y+b.h; }
+
+function handleInput(pos) {
+  if (state === 'char_select') {
+    if (inBox(pos, BOX_CHAR.peppa))  { character='peppa';  state='mode_select'; }
+    if (inBox(pos, BOX_CHAR.george)) { character='george'; state='mode_select'; }
+    return;
+  }
+  if (state === 'mode_select') {
+    if (inBox(pos, BOX_MODE.charcos)) { mode='charcos'; startWaiting(); }
+    if (inBox(pos, BOX_MODE.lodo))    { mode='lodo';    startWaiting(); }
+    return;
+  }
+  if (state === 'waiting') { state='playing'; msgEl.textContent=''; return; }
+  if (state === 'dead')    { goCharSelect(); return; }
+  if (state === 'playing' && !hero.jumping) { hero.vy=-14; hero.jumping=true; }
+}
+
+canvas.addEventListener('click',      e => handleInput(canvasPos(e)));
+canvas.addEventListener('touchstart', e => { e.preventDefault(); handleInput(canvasPos(e)); });
+document.addEventListener('keydown',  e => { if(e.code==='Space') handleInput({x:0,y:0}); });
+
+function startWaiting() {
+  hero.y=GROUND; hero.vy=0; hero.jumping=false; hero.legPhase=0;
+  puddles=[]; particles=[]; popups=[];
+  nextPuddle=120; speed=2.5; score=0; lives=3; frame=0;
+  state='waiting';
+  scoreEl.textContent = mode==='charcos' ? 'Charcos: 0' : 'Splashes: 0';
+  msgEl.textContent = 'Toca para empezar!';
+}
+function goCharSelect() {
+  state='char_select'; scoreEl.textContent=''; msgEl.textContent='';
+  particles=[]; popups=[];
+}
+
+// ── Partículas de barro ──────────────────────────────────────────────────────
+const MUD_COLORS = ['#7B4A1E','#9B6234','#5C3010','#C08040','#A0522D','#6B3A0E'];
+
+function spawnMud(cx, cy, count, big) {
+  for (let i=0; i<count; i++) {
+    const angle = -Math.PI * (0.1 + Math.random() * 0.8); // arco hacia arriba
+    const spd   = big ? 3+Math.random()*9 : 2+Math.random()*5;
+    const side  = Math.random() > 0.5 ? 1 : -1;
+    particles.push({
+      x: cx + (Math.random()-0.5)*20,
+      y: cy,
+      vx: Math.cos(angle) * spd * side,
+      vy: Math.sin(angle) * spd - 1,
+      r:  big ? 4+Math.random()*8 : 2+Math.random()*5,
+      color: MUD_COLORS[Math.floor(Math.random()*MUD_COLORS.length)],
+      life: 1.0,
+      decay: 0.018 + Math.random()*0.018,
+    });
+  }
+}
+
+function updateParticles() {
+  for (let p of particles) {
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.35;
+    p.life -= p.decay;
+  }
+  particles = particles.filter(p => p.life > 0);
+}
+
+function drawParticles() {
+  for (let p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ── Popups de texto ──────────────────────────────────────────────────────────
+function addPopup(text, x, y, color) {
+  popups.push({ text, x, y, color, life:1.0, vy:-1.2 });
+}
+function updatePopups() {
+  for (let p of popups) { p.y+=p.vy; p.life-=0.022; }
+  popups = popups.filter(p => p.life > 0);
+}
+function drawPopups() {
+  for (let p of popups) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.font = 'bold 26px Comic Sans MS, cursive';
+    ctx.textAlign = 'center';
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'left';
+}
+
+// ── Dibujar personaje ────────────────────────────────────────────────────────
+function drawCharacter(x, y, legPhase, jumping, outfitColor, scale) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  const swing = jumping ? 0 : Math.sin(legPhase) * 10;
+  const pink='#FF9EC8', darkPink='#FF6BAA', nose='#CC3377', shoe='#111';
+
+  // Cola
+  ctx.strokeStyle=pink; ctx.lineWidth=4; ctx.lineCap='round';
+  ctx.beginPath(); ctx.arc(-24,-32,7,0.2,3.5,false); ctx.stroke();
+  ctx.beginPath(); ctx.arc(-27,-26,4,-1,1.5,false); ctx.stroke();
+
+  // Pierna trasera
+  ctx.fillStyle=pink;
+  ctx.save(); ctx.translate(-12,-6); ctx.rotate(swing*0.04);
+  ctx.beginPath(); ctx.roundRect(-5,0,10,26,4); ctx.fill();
+  ctx.fillStyle=shoe; ctx.beginPath(); ctx.ellipse(0,27,9,6,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // Pierna delantera
+  ctx.fillStyle=pink;
+  ctx.save(); ctx.translate(8,-6); ctx.rotate(-swing*0.04);
+  ctx.beginPath(); ctx.roundRect(-5,0,10,26,4); ctx.fill();
+  ctx.fillStyle=shoe; ctx.beginPath(); ctx.ellipse(2,27,9,6,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // Cuerpo
+  ctx.fillStyle=outfitColor;
+  ctx.beginPath(); ctx.ellipse(0,-30,22,26,0,0,Math.PI*2); ctx.fill();
+
+  // Cuello
+  ctx.fillStyle=pink;
+  ctx.beginPath(); ctx.ellipse(4,-54,9,6,0,0,Math.PI*2); ctx.fill();
+
+  // Brazo trasero
+  ctx.fillStyle=pink;
+  ctx.save(); ctx.translate(-16,-36); ctx.rotate(-swing*0.03-0.2);
+  ctx.beginPath(); ctx.roundRect(-4,0,8,18,4); ctx.fill(); ctx.restore();
+
+  // Brazo delantero
+  ctx.fillStyle=pink;
+  ctx.save(); ctx.translate(16,-36); ctx.rotate(swing*0.03+0.2);
+  ctx.beginPath(); ctx.roundRect(-4,0,8,18,4); ctx.fill(); ctx.restore();
+
+  // Cabeza
+  ctx.fillStyle=pink;
+  ctx.beginPath(); ctx.arc(6,-68,22,0,Math.PI*2); ctx.fill();
+
+  // Oreja trasera
+  ctx.fillStyle=pink; ctx.beginPath(); ctx.arc(-10,-88,11,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=darkPink; ctx.beginPath(); ctx.arc(-10,-88,6,0,Math.PI*2); ctx.fill();
+  // Oreja delantera
+  ctx.fillStyle=pink; ctx.beginPath(); ctx.arc(12,-89,11,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=darkPink; ctx.beginPath(); ctx.arc(12,-89,6,0,Math.PI*2); ctx.fill();
+
+  // Hocico
+  ctx.fillStyle=darkPink; ctx.beginPath(); ctx.ellipse(26,-64,12,9,-0.1,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=nose;
+  ctx.beginPath(); ctx.arc(21,-65,3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(30,-62,3,0,Math.PI*2); ctx.fill();
+
+  // Ojo trasero
+  ctx.fillStyle='white'; ctx.beginPath(); ctx.arc(-2,-74,7,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#111';  ctx.beginPath(); ctx.arc(-1,-73,4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='white'; ctx.beginPath(); ctx.arc(0,-75,1.5,0,Math.PI*2); ctx.fill();
+  // Ojo delantero
+  ctx.fillStyle='white'; ctx.beginPath(); ctx.arc(12,-76,7,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#111';  ctx.beginPath(); ctx.arc(13,-75,4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='white'; ctx.beginPath(); ctx.arc(14,-77,1.5,0,Math.PI*2); ctx.fill();
+
+  ctx.restore();
+}
+
+function drawHero(x, y, lp, jumping) {
+  if (character==='peppa') drawCharacter(x,y,lp,jumping,'#EE1C25',1.0);
+  else                     drawCharacter(x,y,lp,jumping,'#2B6EC8',0.85);
+}
+
+// ── Charco ───────────────────────────────────────────────────────────────────
+function drawPuddle(x, w) {
+  ctx.fillStyle='rgba(0,0,0,0.15)';
+  ctx.beginPath(); ctx.ellipse(x+w/2,GROUND+14,w/2+4,10,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#7B4A1E';
+  ctx.beginPath(); ctx.ellipse(x+w/2,GROUND+8,w/2,13,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#9B6234';
+  ctx.beginPath(); ctx.ellipse(x+w/2,GROUND+6,w/2-4,9,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='rgba(255,220,150,0.22)';
+  ctx.beginPath(); ctx.ellipse(x+w/2-6,GROUND+4,w/4,4,-0.3,0,Math.PI*2); ctx.fill();
+}
+
+// ── Fondo ────────────────────────────────────────────────────────────────────
+function drawBg(mudMode) {
+  const skyTop = mudMode ? '#B0966E' : '#87CEEB';
+  const skyBot = mudMode ? '#D4B896' : '#C9E8FF';
+  const grad = ctx.createLinearGradient(0,0,0,GROUND);
+  grad.addColorStop(0,skyTop); grad.addColorStop(1,skyBot);
+  ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
+
+  if (!mudMode) {
+    // Sol normal
+    ctx.fillStyle='#FFD700'; ctx.beginPath(); ctx.arc(545,45,38,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#FFE44D'; ctx.beginPath(); ctx.arc(545,45,30,0,Math.PI*2); ctx.fill();
+    drawCloud(80,45,frame*0.18);
+    drawCloud(300,55,frame*0.12);
+    drawCloud(470,35,frame*0.22);
+    ctx.fillStyle='#6CC741'; ctx.fillRect(0,GROUND,W,H-GROUND);
+    ctx.fillStyle='#55A832'; ctx.fillRect(0,GROUND,W,10);
+    ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.fillRect(0,GROUND+10,W,4);
+  } else {
+    // Escenario de lodo
+    ctx.fillStyle='#A0522D'; ctx.beginPath(); ctx.arc(545,45,38,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#C07840'; ctx.beginPath(); ctx.arc(545,45,30,0,Math.PI*2); ctx.fill();
+    drawMudCloud(80,45,frame*0.14);
+    drawMudCloud(300,60,frame*0.10);
+    drawMudCloud(460,35,frame*0.18);
+    // Suelo de barro
+    ctx.fillStyle='#7B4A1E'; ctx.fillRect(0,GROUND,W,H-GROUND);
+    ctx.fillStyle='#9B6234'; ctx.fillRect(0,GROUND,W,10);
+    // Charcos de barro en el suelo
+    for (let bx=0; bx<W; bx+=90) {
+      ctx.fillStyle='#5C3010';
+      ctx.beginPath(); ctx.ellipse(bx+40,GROUND+20,30,8,0,0,Math.PI*2); ctx.fill();
+    }
+  }
+}
+
+function drawCloud(baseX,y,offset) {
+  const x=((baseX-offset)%(W+200)+W+200)%(W+200)-100;
+  ctx.fillStyle='white';
+  ctx.beginPath();
+  ctx.arc(x,y,28,0,Math.PI*2); ctx.arc(x+32,y-10,32,0,Math.PI*2); ctx.arc(x+62,y,24,0,Math.PI*2);
+  ctx.fill();
+}
+function drawMudCloud(baseX,y,offset) {
+  const x=((baseX-offset)%(W+200)+W+200)%(W+200)-100;
+  ctx.fillStyle='#C4956A';
+  ctx.beginPath();
+  ctx.arc(x,y,26,0,Math.PI*2); ctx.arc(x+30,y-8,30,0,Math.PI*2); ctx.arc(x+58,y,22,0,Math.PI*2);
+  ctx.fill();
+}
+
+// ── Pantalla selección personaje ─────────────────────────────────────────────
+function drawCharSelect() {
+  drawBg(false);
+  ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='white'; ctx.font='bold 30px Comic Sans MS, cursive';
+  ctx.textAlign='center'; ctx.fillText('Elige tu personaje!',W/2,42); ctx.textAlign='left';
+
+  for (const [key, b] of Object.entries(BOX_CHAR)) {
+    const isPeppa = key==='peppa';
+    const borderColor = isPeppa ? '#EE1C25' : '#2B6EC8';
+    ctx.fillStyle='rgba(255,255,255,0.88)';
+    ctx.beginPath(); ctx.roundRect(b.x,b.y,b.w,b.h,18); ctx.fill();
+    ctx.strokeStyle=borderColor; ctx.lineWidth=5;
+    ctx.beginPath(); ctx.roundRect(b.x,b.y,b.w,b.h,18); ctx.stroke();
+    drawCharacter(b.x+b.w/2-10, b.y+b.h-28, frame*0.06, false,
+      isPeppa?'#EE1C25':'#2B6EC8', isPeppa?1.0:0.85);
+    ctx.fillStyle=borderColor; ctx.font='bold 22px Comic Sans MS, cursive';
+    ctx.textAlign='center';
+    ctx.fillText(isPeppa?'Pepa':'George', b.x+b.w/2, b.y+b.h-4);
+    ctx.textAlign='left';
+  }
+}
+
+// ── Pantalla selección modo ───────────────────────────────────────────────────
+function drawModeSelect() {
+  drawBg(false);
+  ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='white'; ctx.font='bold 28px Comic Sans MS, cursive';
+  ctx.textAlign='center'; ctx.fillText('Como queres jugar?',W/2,42); ctx.textAlign='left';
+
+  // Caja Charcos
+  const bc = BOX_MODE.charcos;
+  ctx.fillStyle='rgba(200,240,200,0.92)';
+  ctx.beginPath(); ctx.roundRect(bc.x,bc.y,bc.w,bc.h,18); ctx.fill();
+  ctx.strokeStyle='#55A832'; ctx.lineWidth=5;
+  ctx.beginPath(); ctx.roundRect(bc.x,bc.y,bc.w,bc.h,18); ctx.stroke();
+  // Icono: personaje saltando un charco
+  drawCharacter(bc.x+60, bc.y+bc.h-30, 0, true, character==='peppa'?'#EE1C25':'#2B6EC8', 0.75);
+  drawPuddle(bc.x+90, 55);
+  ctx.fillStyle='#2E7D32'; ctx.font='bold 18px Comic Sans MS, cursive';
+  ctx.textAlign='center';
+  ctx.fillText('Saltar', bc.x+bc.w/2, bc.y+bc.h-10);
+  ctx.fillText('Charcos!', bc.x+bc.w/2, bc.y+bc.h+10);
+  ctx.textAlign='left';
+
+  // Caja Lodo
+  const bl = BOX_MODE.lodo;
+  ctx.fillStyle='rgba(200,160,100,0.92)';
+  ctx.beginPath(); ctx.roundRect(bl.x,bl.y,bl.w,bl.h,18); ctx.fill();
+  ctx.strokeStyle='#7B4A1E'; ctx.lineWidth=5;
+  ctx.beginPath(); ctx.roundRect(bl.x,bl.y,bl.w,bl.h,18); ctx.stroke();
+  // Icono: personaje aterrizando en charco
+  drawCharacter(bl.x+60, bl.y+bl.h-30, 0, false, character==='peppa'?'#EE1C25':'#2B6EC8', 0.75);
+  drawPuddle(bl.x+30, 70);
+  ctx.fillStyle='#7B4A1E'; ctx.font='bold 18px Comic Sans MS, cursive';
+  ctx.textAlign='center';
+  ctx.fillText('Saltar en', bl.x+bl.w/2, bl.y+bl.h-10);
+  ctx.fillText('el Lodo!', bl.x+bl.w/2, bl.y+bl.h+10);
+  ctx.textAlign='left';
+}
+
+// ── Corazones (vidas) ─────────────────────────────────────────────────────────
+function drawHeart(x, y, filled) {
+  ctx.fillStyle = filled ? '#EE1C25' : 'rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.moveTo(x, y+4);
+  ctx.bezierCurveTo(x,y-2, x-10,y-2, x-10,y+4);
+  ctx.bezierCurveTo(x-10,y+10, x,y+16, x,y+16);
+  ctx.bezierCurveTo(x,y+16, x+10,y+10, x+10,y+4);
+  ctx.bezierCurveTo(x+10,y-2, x,y-2, x,y+4);
+  ctx.fill();
+}
+function drawLives() {
+  for (let i=0; i<3; i++) drawHeart(W-40-i*28, 14, i < lives);
+}
+
+// ── Update ────────────────────────────────────────────────────────────────────
+function update() {
+  frame++;
+  if (state !== 'playing') return;
+
+  // Física
+  const wasJumping = hero.jumping;
+  hero.vy += 0.55;
+  hero.y  += hero.vy;
+  let justLanded = false;
+  if (hero.y >= GROUND) {
+    hero.y=GROUND; hero.vy=0;
+    if (wasJumping) justLanded=true;
+    hero.jumping=false;
+  }
+  if (!hero.jumping) hero.legPhase += 0.18;
+
+  updateParticles();
+  updatePopups();
+
+  // Spawn charcos
+  nextPuddle--;
+  if (nextPuddle <= 0) {
+    const w = mode==='lodo' ? 60+Math.random()*50 : 45+Math.random()*45;
+    puddles.push({ x:W+10, w, passed:false, scored:false, missed:false });
+    const base = mode==='lodo' ? 160 : 130;
+    nextPuddle = Math.max(base + Math.random()*60 - score*0.6, mode==='lodo'?110:70);
+  }
+
+  for (let p of puddles) p.x -= speed;
+  puddles = puddles.filter(p => p.x+p.w > -20);
+  speed = 2.5 + frame * 0.001 + score * 0.03;
+
+  const hsKey = `${character}_${mode}`;
+
+  if (mode === 'charcos') {
+    // ── Modo charcos: saltar POR ENCIMA ─────────────────────────────────────
+    for (let p of puddles) {
+      if (!p.passed && p.x+p.w < hero.x-10) {
+        p.passed=true; score++;
+        scoreEl.textContent=`Charcos: ${score}`;
+      }
+      const hit = hero.x+12>p.x+8 && hero.x-12<p.x+p.w-8 && hero.y>GROUND-8;
+      if (hit) {
+        spawnMud(hero.x, GROUND, 22, true);
+        addPopup('SPLASH!', hero.x, GROUND-55, '#FFD700');
+        state='dead';
+        if (score>highScore[hsKey]) highScore[hsKey]=score;
+        msgEl.textContent='';
+        return;
+      }
+    }
+
+  } else {
+    // ── Modo lodo: aterrizar DENTRO del charco ───────────────────────────────
+    if (justLanded) {
+      let landedInPuddle = false;
+      for (let p of puddles) {
+        if (!p.scored && hero.x+18>p.x+5 && hero.x-18<p.x+p.w-5) {
+          p.scored=true; landedInPuddle=true;
+          score++;
+          spawnMud(hero.x, GROUND, 30, true);
+          addPopup('SPLASH!', hero.x, GROUND-60, '#FFD700');
+          scoreEl.textContent=`Splashes: ${score}`;
+        }
+      }
+      // Pequeño splash al aterrizar aunque no haya charco
+      if (!landedInPuddle) spawnMud(hero.x, GROUND, 4, false);
+    }
+
+    // Charco pasado sin atrapar = pierde corazón
+    for (let p of puddles) {
+      if (!p.scored && !p.missed && p.x+p.w < hero.x-5) {
+        p.missed=true; lives--;
+        addPopup('Oops!', hero.x, GROUND-50, '#FF4444');
+        if (lives <= 0) {
+          state='dead';
+          if (score>highScore[hsKey]) highScore[hsKey]=score;
+          msgEl.textContent='';
+          return;
+        }
+      }
+    }
+  }
+}
+
+// ── Draw ──────────────────────────────────────────────────────────────────────
+function draw() {
+  ctx.clearRect(0,0,W,H);
+
+  if (state === 'char_select') { drawCharSelect(); return; }
+  if (state === 'mode_select') { drawModeSelect(); return; }
+
+  const isMud = (mode === 'lodo');
+  drawBg(isMud);
+  for (let p of puddles) drawPuddle(p.x, p.w);
+  drawHero(hero.x, hero.y, hero.legPhase, hero.jumping);
+  drawParticles();
+  drawPopups();
+  if (isMud) drawLives();
+
+  if (state === 'waiting') {
+    ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='white';
+    ctx.font='bold 36px Comic Sans MS, cursive'; ctx.textAlign='center';
+    ctx.fillText(isMud ? 'Salta en el Lodo!' : 'Salta los Charcos!', W/2, H/2);
+    ctx.textAlign='left';
+  }
+
+  if (state === 'dead') {
+    ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='white';
+    ctx.font='bold 34px Comic Sans MS, cursive'; ctx.textAlign='center';
+    const label = isMud ? 'Splashes' : 'Charcos';
+    const hsKey = `${character}_${mode}`;
+    ctx.fillText(`${label}: ${score}`, W/2, H/2-18);
+    ctx.font='24px Comic Sans MS, cursive';
+    ctx.fillText(`Record: ${highScore[hsKey]}`, W/2, H/2+20);
+    ctx.font='20px Comic Sans MS, cursive';
+    ctx.fillText('Toca para elegir personaje', W/2, H/2+52);
+    ctx.textAlign='left';
+  }
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js');
+}
+</script>
+</body>
+</html>

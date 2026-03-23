@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Fondo celeste con esquinas redondeadas -->
+  <rect width="512" height="512" rx="100" fill="#87CEEB"/>
+
+  <!-- Oreja trasera -->
+  <circle cx="168" cy="148" r="58" fill="#FF9EC8"/>
+  <circle cx="168" cy="148" r="32" fill="#FF6BAA"/>
+
+  <!-- Oreja delantera -->
+  <circle cx="318" cy="138" r="58" fill="#FF9EC8"/>
+  <circle cx="318" cy="138" r="32" fill="#FF6BAA"/>
+
+  <!-- Cabeza -->
+  <circle cx="245" cy="275" r="140" fill="#FF9EC8"/>
+
+  <!-- Hocico (snout) hacia la derecha -->
+  <ellipse cx="348" cy="300" rx="74" ry="54" fill="#FF6BAA"/>
+
+  <!-- Fosas nasales -->
+  <circle cx="326" cy="292" r="16" fill="#CC3377"/>
+  <circle cx="368" cy="308" r="16" fill="#CC3377"/>
+
+  <!-- Ojo izquierdo (trasero) -->
+  <circle cx="195" cy="228" r="36" fill="white"/>
+  <circle cx="200" cy="230" r="20" fill="#111"/>
+  <circle cx="208" cy="222" r="8" fill="white"/>
+
+  <!-- Ojo derecho (delantero) -->
+  <circle cx="278" cy="216" r="36" fill="white"/>
+  <circle cx="283" cy="218" r="20" fill="#111"/>
+  <circle cx="291" cy="210" r="8" fill="white"/>
+</svg>
