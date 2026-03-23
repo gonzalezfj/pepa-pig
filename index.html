@@ -66,6 +66,7 @@ let state     = 'char_select';
 let character = 'peppa';
 let mode      = 'charcos';
 let score     = 0;
+let combo     = 1;
 let lives     = 3;
 let frame     = 0;
 const highScore = { peppa_charcos:0, peppa_lodo:0, george_charcos:0, george_lodo:0 };
@@ -117,7 +118,7 @@ document.addEventListener('keydown',  e => { if(e.code==='Space') handleInput({x
 function startWaiting() {
   hero.y=GROUND; hero.vy=0; hero.jumping=false; hero.legPhase=0;
   puddles=[]; particles=[]; popups=[];
-  nextPuddle=150; speed=2.5; score=0; lives=3; frame=0;
+  nextPuddle=150; speed=2.5; score=0; combo=1; lives=3; frame=0;
   state='waiting';
 }
 function goCharSelect() {
@@ -320,6 +321,14 @@ function drawHUD() {
   ctx.textAlign='left';
   ctx.fillText(`${label}: ${score}`, 24, 46);
 
+  if (combo > 1) {
+    const comboColor = combo > 4 ? '#FF6600' : '#FFD700';
+    ctx.fillStyle='rgba(0,0,0,0.25)';
+    ctx.beginPath(); ctx.roundRect(12,66,160,40,12); ctx.fill();
+    ctx.fillStyle=comboColor; ctx.font=`bold 24px ${FONT}`;
+    ctx.fillText(`Combo x${combo}!`, 22, 96);
+  }
+
   if (mode==='lodo') {
     for (let i=0; i<3; i++) drawHeart(W-48-i*36, 18, i < lives);
   } else {
@@ -437,7 +446,10 @@ function update() {
   if (mode === 'charcos') {
     for (let p of puddles) {
       if (!p.passed && p.x+p.w < hero.x-10) {
-        p.passed=true; score++;
+        p.passed=true;
+        score += combo;
+        addPopup(combo > 1 ? `+${combo} x${combo}!` : `+1`, hero.x, GROUND-80, combo > 2 ? '#FF6600' : '#FFD700');
+        combo++;
       }
       const hit = hero.x+15>p.x+8 && hero.x-15<p.x+p.w-8 && hero.y>GROUND-10;
       if (hit) {
@@ -453,16 +465,18 @@ function update() {
       let hit=false;
       for (let p of puddles) {
         if (!p.scored && hero.x+20>p.x+5 && hero.x-20<p.x+p.w-5) {
-          p.scored=true; hit=true; score++;
+          p.scored=true; hit=true;
+          score += combo;
           spawnMud(hero.x, GROUND, 35, true);
-          addPopup('SPLASH!', hero.x, GROUND-80, '#FFD700');
+          addPopup(combo > 1 ? `SPLASH! x${combo}` : 'SPLASH!', hero.x, GROUND-80, combo > 2 ? '#FF6600' : '#FFD700');
+          combo++;
         }
       }
       if (!hit) spawnMud(hero.x, GROUND, 5, false);
     }
     for (let p of puddles) {
       if (!p.scored && !p.missed && p.x+p.w < hero.x-5) {
-        p.missed=true; lives--;
+        p.missed=true; lives--; combo=1;
         addPopup('Oops!', hero.x, GROUND-70, '#FF4444');
         if (lives<=0) {
           if (score>highScore[hsKey]) highScore[hsKey]=score;
