@@ -1,5 +1,5 @@
-const CACHE = 'pepa-pig-v1';
-const FILES = ['/', '/index.html', '/manifest.json'];
+const CACHE = 'pepa-pig-20260322-2';
+const FILES = ['/', '/index.html', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)));
